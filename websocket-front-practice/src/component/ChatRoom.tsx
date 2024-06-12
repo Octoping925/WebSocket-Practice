@@ -2,9 +2,18 @@ import { CompatClient, Stomp } from "@stomp/stompjs";
 import { useEffect, useRef, useState } from "react";
 import SockJS from "sockjs-client";
 
-type Chat = { requestUsername: string; message: string };
+type Chat = {
+  id: number;
+  message: string;
+  member: {
+    id: number;
+    nickname: string;
+    baekjoonTier: string | null;
+  };
+  createdAt: string;
+};
 
-export function ChatRoom() {
+export function ChatRoom({ roomId }: { roomId: number }) {
   const [chatHistory, setChatHistory] = useState<Chat[]>([]);
   const [username, setUsername] = useState<string>("");
   const [message, setMessage] = useState<string>("");
@@ -12,29 +21,24 @@ export function ChatRoom() {
   const client = useRef<CompatClient | null>(null);
 
   function connectHandler() {
-    const socket = new SockJS("http://localhost:8080/practice");
+    const socket = new SockJS("http://localhost:8080/ws-chat");
 
     client.current = Stomp.over(socket);
-    client.current.connect(getHeader(), () => {
-      client.current?.subscribe(
-        "/topic/chatting",
-        (message) => {
-          setChatHistory((prev) => [...prev, JSON.parse(message.body)]);
-        },
-        getHeader()
-      );
+    client.current.connect(undefined, () => {
+      client.current?.subscribe(`/chat/${roomId}`, (message) => {
+        // 구독해둔 채팅방에서 채팅이 올라왔을 경우
+        setChatHistory((prev) => [...prev, JSON.parse(message.body)]);
+      });
     });
   }
 
   function sendChat() {
-    if (!username || !message) return;
-
     if (client.current && client.current.connected) {
       client.current.send(
-        "/app/chat",
-        getHeader(),
+        `/app/${roomId}`,
+        undefined,
         JSON.stringify({
-          requestUsername: username,
+          requestMemberId: Number(username),
           message: message,
         })
       );
@@ -49,7 +53,21 @@ export function ChatRoom() {
     return () => {
       client.current?.disconnect();
     };
-  }, []);
+  }, [roomId]);
+
+  useEffect(() => {
+    setChatHistory([]);
+    fetch(`http://localhost:8080/chats/${roomId}`, {
+      method: "GET",
+      headers: {
+        Authorization: "Bearer " + localStorage.getItem("accessToken"),
+      },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setChatHistory(data.chat);
+      });
+  }, [roomId]);
 
   return (
     <>
@@ -62,7 +80,7 @@ export function ChatRoom() {
             {chatHistory.map((chat) => (
               <tr key={chat.message}>
                 <td>
-                  작성자: {chat.requestUsername} / 메시지: {chat.message}
+                  작성자: {chat.member.nickname} / 메시지: {chat.message}
                 </td>
               </tr>
             ))}
@@ -84,10 +102,3 @@ export function ChatRoom() {
     </>
   );
 }
-
-const getHeader = () => {
-  return {
-    Authorization: "Bearer " + localStorage.getItem("token"),
-    "Content-Type": "application/json",
-  };
-};
